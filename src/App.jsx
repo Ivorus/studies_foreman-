@@ -416,7 +416,8 @@ function QuestionForm({ initial = EMPTY_FORM, onSave, onCancel, saveLabel = 'ש�
       <div style={S.formGroup}>
         <label style={S.label}>טקסט השאלה *</label>
         <textarea
-          style={{ ...S.input, minHeight: 86, resize: 'vertical', lineHeight: 1.6 }}
+          style={{ ...S.input, minHeight: 86, resize: 'vertical', lineHeight: 1.6, direction: 'rtl', textAlign: 'right', unicodeBidi: 'plaintext' }}
+          dir="rtl"
           placeholder="הזן את טקסט השאלה כאן..."
           value={form.question}
           onChange={e => set('question', e.target.value)}
@@ -797,7 +798,7 @@ const S = {
   row2: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 },
   formGroup: { marginBottom: 16 },
   label: { display: 'block', fontSize: 13, fontWeight: 600, color: 'var(--gray-600)', marginBottom: 6 },
-  input: { width: '100%', border: '2px solid var(--gray-200)', borderRadius: 12, padding: '12px 14px', fontFamily: 'inherit', fontSize: 14, color: 'var(--gray-800)', background: 'white', outline: 'none' },
+  input: { width: '100%', border: '2px solid var(--gray-200)', borderRadius: 12, padding: '12px 14px', fontFamily: 'inherit', fontSize: 14, color: 'var(--gray-800)', background: 'white', outline: 'none', direction: 'rtl', textAlign: 'right', unicodeBidi: 'plaintext' },
   errBox: { background: '#fef2f2', color: 'var(--red)', borderRadius: 10, padding: '12px 14px', fontSize: 13, marginBottom: 14, border: '1px solid #fecaca' },
   btnPrimary: { width: '100%', background: 'var(--blue)', color: 'white', border: 'none', borderRadius: 14, padding: 15, fontFamily: 'inherit', fontSize: 16, fontWeight: 700, cursor: 'pointer' },
   adminLink: { background: 'none', border: 'none', color: 'var(--gray-400)', fontSize: 12, cursor: 'pointer', fontFamily: 'inherit' },
@@ -843,7 +844,7 @@ const S = {
   // admin
   adminLoginBg: { minHeight: '100vh', background: '#111827', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 },
   adminLoginCard: { background: '#1f2937', borderRadius: 20, padding: '36px 32px', maxWidth: 380, width: '100%' },
-  adminInput: { width: '100%', background: '#374151', border: '2px solid #4b5563', borderRadius: 12, padding: 14, color: 'white', fontFamily: 'inherit', fontSize: 15, outline: 'none', marginBottom: 16, textAlign: 'right' },
+  adminInput: { width: '100%', background: '#374151', border: '2px solid #4b5563', borderRadius: 12, padding: 14, color: 'white', fontFamily: 'inherit', fontSize: 15, outline: 'none', marginBottom: 16, direction: 'rtl', textAlign: 'right' },
   btnBack: { width: '100%', background: 'transparent', border: '2px solid #4b5563', color: '#9ca3af', borderRadius: 12, padding: 12, fontFamily: 'inherit', fontSize: 14, cursor: 'pointer', marginTop: 8 },
   adminBar: { background: '#1f2937', color: 'white', padding: '14px 20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', position: 'sticky', top: 0, zIndex: 100 },
   adminCard: { background: 'white', borderRadius: 16, padding: 20, marginBottom: 12, boxShadow: '0 1px 4px rgba(0,0,0,0.06)' },

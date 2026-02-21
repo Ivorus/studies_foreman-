@@ -1,4 +1,11 @@
 * { margin: 0; padding: 0; box-sizing: border-box; }
+
+/* Force RTL for all text inputs and textareas */
+input, textarea, select {
+  direction: rtl !important;
+  text-align: right !important;
+  unicode-bidi: plaintext !important;
+}
 :root {
   --blue: #1e40af;
   --blue-dark: #1e3a8a;
