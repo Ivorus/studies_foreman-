@@ -9,9 +9,11 @@ npm install
 npm run dev
 ```
 
-## דפלוי לVercel
+## דפלוי ל-Vercel
 
 1. Push לגיטהאב
 2. connect on vercel.com
-3. Done
+3. Done!
 
+## סיסמת מנהל
+`admin123`
