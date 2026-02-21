@@ -25,21 +25,29 @@ function shuffle(arr) {
 }
 
 // ── storage helpers ───────────────────────────────────────────
-async function loadSavedAnswers(base) {
+async function loadSavedData(base) {
+  let questions = [...base]
   try {
-    const r = await window.storage.get('q_answers')
-    if (r?.value) {
-      const map = JSON.parse(r.value)
-      return base.map(q => ({ ...q, answer: map[q.id] !== undefined ? (map[q.id] || null) : q.answer }))
+    const ra = await window.storage.get('q_answers')
+    if (ra?.value) {
+      const map = JSON.parse(ra.value)
+      questions = questions.map(q => ({ ...q, answer: map[q.id] !== undefined ? (map[q.id] || null) : q.answer }))
+    }
+    const rc = await window.storage.get('q_custom')
+    if (rc?.value) {
+      const custom = JSON.parse(rc.value)
+      questions = [...questions, ...custom]
     }
   } catch (_) {}
-  return base
+  return questions
 }
 
-async function persistAnswers(questions) {
+async function persistAll(questions) {
   const map = {}
   questions.forEach(q => { map[q.id] = q.answer || null })
   try { await window.storage.set('q_answers', JSON.stringify(map)) } catch (_) {}
+  const custom = questions.filter(q => q.custom === true)
+  try { await window.storage.set('q_custom', JSON.stringify(custom)) } catch (_) {}
 }
 
 // ════════════════════════════════════════════════════════════════
@@ -359,76 +367,260 @@ function AdminLoginScreen({ onLogin, onBack }) {
 // ════════════════════════════════════════════════════════════════
 //  ADMIN PANEL
 // ════════════════════════════════════════════════════════════════
-function AdminPanel({ questions, onUpdate, onExit }) {
+const EMPTY_FORM = { question: '', א: '', ב: '', ג: '', ד: '', answer: '' }
+
+function qToForm(q) {
+  return {
+    question: q.question || '',
+    'א': q.options?.['א'] || '',
+    'ב': q.options?.['ב'] || '',
+    'ג': q.options?.['ג'] || '',
+    'ד': q.options?.['ד'] || '',
+    answer: q.answer || '',
+  }
+}
+
+// Shared form for both adding and editing a question
+function QuestionForm({ initial = EMPTY_FORM, onSave, onCancel, saveLabel = 'שמור', title }) {
+  const [form, setForm] = useState(initial)
+  const [err, setErr] = useState('')
+
+  function set(key, val) {
+    setForm(f => {
+      const next = { ...f, [key]: val }
+      // clear answer if that option was emptied
+      if (LETTERS.includes(key) && !val.trim() && f.answer === key) next.answer = ''
+      return next
+    })
+  }
+
+  function submit() {
+    if (!form.question.trim()) return setErr('נא להזין טקסט שאלה')
+    if (!form['א'].trim() || !form['ב'].trim()) return setErr('חובה למלא לפחות תשובות א ו-ב')
+    if (!form.answer) return setErr('נא לבחור תשובה נכונה')
+    setErr('')
+    onSave({
+      question: form.question.trim(),
+      options: Object.fromEntries(
+        LETTERS.filter(l => form[l].trim()).map(l => [l, form[l].trim()])
+      ),
+      answer: form.answer,
+    })
+  }
+
+  return (
+    <div style={S.adminCard}>
+      {title && <h3 style={{ fontWeight: 700, fontSize: 16, marginBottom: 18, color: 'var(--gray-800)' }}>{title}</h3>}
+
+      {/* Question text */}
+      <div style={S.formGroup}>
+        <label style={S.label}>טקסט השאלה *</label>
+        <textarea
+          style={{ ...S.input, minHeight: 86, resize: 'vertical', lineHeight: 1.6 }}
+          placeholder="הזן את טקסט השאלה כאן..."
+          value={form.question}
+          onChange={e => set('question', e.target.value)}
+        />
+      </div>
+
+      {/* Options */}
+      <div style={{ background: 'var(--gray-50)', borderRadius: 14, padding: 16, marginBottom: 14 }}>
+        <p style={{ fontWeight: 700, fontSize: 13, color: 'var(--gray-600)', marginBottom: 12 }}>
+          תשובות אפשריות — לחץ על האות לסימון התשובה הנכונה
+        </p>
+        {LETTERS.map(l => (
+          <div key={l} style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
+            <div
+              title="לחץ לסמן כתשובה נכונה"
+              style={{
+                ...S.optLetter, flexShrink: 0, cursor: 'pointer', transition: 'background 0.15s',
+                background: form.answer === l ? 'var(--green)' : form[l].trim() ? 'var(--blue-light)' : 'var(--gray-200)',
+                color: form.answer === l || form[l].trim() ? 'white' : 'var(--gray-500)',
+              }}
+              onClick={() => { if (form[l].trim()) set('answer', l) }}
+            >{l}</div>
+            <input
+              style={{ ...S.input, marginBottom: 0, flex: 1 }}
+              placeholder={`תשובה ${l}${l === 'א' || l === 'ב' ? ' *' : ' (אופציונלי)'}`}
+              value={form[l]}
+              onChange={e => set(l, e.target.value)}
+            />
+          </div>
+        ))}
+      </div>
+
+      {/* Answer indicator */}
+      {form.answer
+        ? <div style={{ background: '#ecfdf5', border: '1px solid #a7f3d0', borderRadius: 10, padding: '10px 14px', fontSize: 13, color: '#065f46', fontWeight: 600, marginBottom: 14 }}>
+            ✓ תשובה נכונה: <strong>{form.answer}</strong> — {form[form.answer]}
+          </div>
+        : <div style={{ background: '#fffbeb', border: '1px solid #fde68a', borderRadius: 10, padding: '10px 14px', fontSize: 13, color: '#92400e', marginBottom: 14 }}>
+            ⚠️ לא נבחרה תשובה נכונה — לחץ על אות כדי לבחור
+          </div>
+      }
+
+      {err && <div style={{ ...S.errBox, marginBottom: 14 }}>{err}</div>}
+
+      <div style={{ display: 'flex', gap: 10 }}>
+        <button style={{ ...S.btnNav, ...S.btnGreen, flex: 1 }} onClick={submit}>{saveLabel}</button>
+        {onCancel && <button style={{ ...S.btnNav, flex: 1 }} onClick={onCancel}>ביטול</button>}
+      </div>
+    </div>
+  )
+}
+
+function AdminPanel({ questions, onUpdate, onAdd, onDelete, onExit }) {
+  const [tab, setTab] = useState('list')
   const [search, setSearch] = useState('')
-  const [editId, setEditId] = useState(null)
-  const [editAns, setEditAns] = useState('')
+  const [editId, setEditId] = useState(null)   // full-edit mode
+  const [deleteId, setDeleteId] = useState(null)
+  const [savedId, setSavedId] = useState(null)  // flash "saved" badge
 
   const filtered = questions.filter(q =>
-    String(q.id).includes(search) || q.question.includes(search)
+    String(q.id).includes(search) || q.question.toLowerCase().includes(search.toLowerCase())
   )
 
-  function save(id) {
-    onUpdate(id, editAns)
+  function handleUpdate(id, data) {
+    onUpdate(id, data)
     setEditId(null)
+    setSavedId(id)
+    setTimeout(() => setSavedId(null), 2500)
   }
+
+  function handleAdd(data) {
+    onAdd(data)
+    setTab('list')
+  }
+
+  const tabStyle = (key) => ({
+    flex: 1, padding: '12px 8px', fontFamily: 'inherit', fontSize: 14, fontWeight: 700,
+    border: 'none', cursor: 'pointer',
+    background: tab === key ? '#1e40af' : 'transparent',
+    color: tab === key ? 'white' : '#9ca3af',
+    borderBottom: tab === key ? '3px solid #60a5fa' : '3px solid transparent',
+  })
 
   return (
     <div style={S.screen}>
       <div style={S.adminBar}>
-        <span style={{ fontWeight: 700, fontSize: 16 }}>⚙️ ניהול תשובות</span>
+        <span style={{ fontWeight: 700, fontSize: 16 }}>⚙️ פאנל ניהול</span>
         <button style={S.btnExit} onClick={onExit}>יציאה</button>
       </div>
-      <div style={S.container}>
-        <input
-          style={{ ...S.input, marginBottom: 16 }}
-          placeholder="חפש לפי מספר שאלה או תוכן..."
-          value={search}
-          onChange={e => setSearch(e.target.value)}
-        />
-        {filtered.map(q => {
-          const opts = LETTERS.filter(l => q.options[l])
-          const isEditing = editId === q.id
-          return (
-            <div key={q.id} style={S.adminCard}>
-              <div style={S.adminCardHeader}>
-                <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                  <span style={S.qNum}>שאלה {q.id}</span>
-                  <span style={{ ...S.ansBadge, ...(q.answer ? S.ansBadgeGreen : S.ansBadgeYellow) }}>
-                    {q.answer ? `תשובה: ${q.answer}` : 'ללא תשובה'}
-                  </span>
-                </div>
-                <button style={S.btnEdit} onClick={() => { setEditId(q.id); setEditAns(q.answer || '') }}>✏️ עדכן</button>
-              </div>
-              <p style={S.adminQText}>{q.question}</p>
-              <div style={S.adminOpts}>
-                {opts.map(l => (
-                  <div key={l} style={{ ...S.adminOpt, ...(q.answer === l ? S.adminOptCorrect : {}) }}>
-                    <strong>{l}.</strong> {q.options[l]}
-                  </div>
-                ))}
-              </div>
-              {isEditing && (
-                <div style={S.editPanel}>
-                  <p style={{ fontWeight: 700, marginBottom: 10, fontSize: 14 }}>בחר תשובה נכונה:</p>
-                  <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                    {opts.map(l => (
-                      <button key={l} style={{ ...S.letterBtn, ...(editAns === l ? S.letterBtnSel : {}) }}
-                        onClick={() => setEditAns(l)}>{l}</button>
-                    ))}
-                    <button style={S.clearBtn} onClick={() => setEditAns('')}>✗ נקה</button>
-                  </div>
-                  <div style={{ display: 'flex', gap: 10, marginTop: 14 }}>
-                    <button style={{ ...S.btnNav, ...S.btnGreen, flex: 1 }} onClick={() => save(q.id)}>שמור</button>
-                    <button style={{ ...S.btnNav, flex: 1 }} onClick={() => setEditId(null)}>ביטול</button>
-                  </div>
-                </div>
-              )}
-            </div>
-          )
-        })}
-        {filtered.length === 0 && <p style={{ textAlign: 'center', color: 'var(--gray-400)', padding: 40 }}>לא נמצאו שאלות</p>}
+
+      {/* Tabs */}
+      <div style={{ display: 'flex', background: '#111827', borderBottom: '2px solid #374151' }}>
+        <button style={tabStyle('list')} onClick={() => { setTab('list'); setEditId(null) }}>
+          📋 שאלות ({questions.length})
+        </button>
+        <button style={tabStyle('add')} onClick={() => { setTab('add'); setEditId(null) }}>
+          ➕ הוסף שאלה
+        </button>
       </div>
+
+      {/* ── LIST TAB ── */}
+      {tab === 'list' && (
+        <div style={S.container}>
+          <input
+            style={{ ...S.input, marginBottom: 16 }}
+            placeholder="חפש לפי מספר שאלה או תוכן..."
+            value={search}
+            onChange={e => { setSearch(e.target.value); setEditId(null) }}
+          />
+
+          {filtered.length === 0 && (
+            <p style={{ textAlign: 'center', color: 'var(--gray-400)', padding: 40 }}>לא נמצאו שאלות</p>
+          )}
+
+          {filtered.map(q => {
+            const opts = LETTERS.filter(l => q.options?.[l])
+            const isCustom = q.custom === true
+            const isEditing = editId === q.id
+            const wasSaved = savedId === q.id
+
+            return (
+              <div key={q.id} style={{
+                ...S.adminCard,
+                borderRight: isCustom ? '4px solid #a78bfa' : undefined,
+                outline: wasSaved ? '2px solid var(--green)' : undefined,
+              }}>
+                {/* Card header */}
+                <div style={S.adminCardHeader}>
+                  <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                    <span style={S.qNum}>שאלה {q.id}</span>
+                    {isCustom && <span style={{ ...S.ansBadge, background: '#ede9fe', color: '#6d28d9' }}>✨ חדש</span>}
+                    {wasSaved && <span style={{ ...S.ansBadge, ...S.ansBadgeGreen }}>✅ נשמר</span>}
+                    <span style={{ ...S.ansBadge, ...(q.answer ? S.ansBadgeGreen : S.ansBadgeYellow) }}>
+                      {q.answer ? `תשובה: ${q.answer}` : 'ללא תשובה'}
+                    </span>
+                  </div>
+                  <div style={{ display: 'flex', gap: 6 }}>
+                    <button
+                      style={{ ...S.btnEdit, ...(isEditing ? { background: '#fef9c3', color: '#92400e', borderColor: '#fde68a' } : {}) }}
+                      onClick={() => setEditId(isEditing ? null : q.id)}
+                    >
+                      {isEditing ? '✕ סגור' : '✏️ ערוך'}
+                    </button>
+                    <button
+                      style={{ ...S.btnEdit, background: '#fef2f2', color: 'var(--red)', border: '1px solid #fecaca' }}
+                      onClick={() => setDeleteId(q.id)}
+                    >🗑️</button>
+                  </div>
+                </div>
+
+                {/* Question preview (collapsed) */}
+                {!isEditing && (
+                  <>
+                    <p style={S.adminQText}>{q.question}</p>
+                    <div style={S.adminOpts}>
+                      {opts.map(l => (
+                        <div key={l} style={{ ...S.adminOpt, ...(q.answer === l ? S.adminOptCorrect : {}) }}>
+                          <strong>{l}.</strong> {q.options[l]}
+                        </div>
+                      ))}
+                    </div>
+                  </>
+                )}
+
+                {/* Full edit form (expanded) */}
+                {isEditing && (
+                  <div style={{ marginTop: 16 }}>
+                    <QuestionForm
+                      initial={qToForm(q)}
+                      onSave={(data) => handleUpdate(q.id, data)}
+                      onCancel={() => setEditId(null)}
+                      saveLabel="💾 שמור שינויים"
+                    />
+                  </div>
+                )}
+              </div>
+            )
+          })}
+        </div>
+      )}
+
+      {/* ── ADD TAB ── */}
+      {tab === 'add' && (
+        <div style={S.container}>
+          <QuestionForm
+            title="➕ הוספת שאלה חדשה"
+            onSave={handleAdd}
+            saveLabel="הוסף שאלה ←"
+          />
+        </div>
+      )}
+
+      {/* Delete confirm modal */}
+      {deleteId !== null && (
+        <Modal
+          title="למחוק שאלה זו?"
+          body="פעולה זו אינה ניתנת לביטול"
+          confirmLabel="מחק"
+          cancelLabel="ביטול"
+          onConfirm={() => { onDelete(deleteId); setDeleteId(null) }}
+          onCancel={() => setDeleteId(null)}
+          danger
+        />
+      )}
     </div>
   )
 }
@@ -537,13 +729,35 @@ export default function App() {
   const [examResult, setExamResult] = useState(null)
 
   useEffect(() => {
-    loadSavedAnswers(QUESTIONS_RAW).then(setQuestions)
+    loadSavedData(QUESTIONS_RAW).then(setQuestions)
   }, [])
 
-  function updateAnswer(id, answer) {
+  function updateAnswer(id, data) {
     setQuestions(prev => {
-      const next = prev.map(q => q.id === id ? { ...q, answer: answer || null } : q)
-      persistAnswers(next)
+      const next = prev.map(q => {
+        if (q.id !== id) return q
+        if (typeof data === 'string') return { ...q, answer: data || null }
+        return { ...q, ...data }
+      })
+      persistAll(next)
+      return next
+    })
+  }
+
+  function addQuestion({ question, options, answer }) {
+    setQuestions(prev => {
+      const maxId = prev.reduce((m, q) => Math.max(m, typeof q.id === 'number' ? q.id : 0), 0)
+      const newQ = { id: maxId + 1, question, options, answer, custom: true }
+      const next = [...prev, newQ]
+      persistAll(next)
+      return next
+    })
+  }
+
+  function deleteQuestion(id) {
+    setQuestions(prev => {
+      const next = prev.filter(q => q.id !== id)
+      persistAll(next)
       return next
     })
   }
@@ -559,7 +773,7 @@ export default function App() {
 
   if (screen === 'login') return <LoginScreen onLogin={handleLogin} onAdmin={() => setScreen('admin-login')} />
   if (screen === 'admin-login') return <AdminLoginScreen onLogin={() => setScreen('admin')} onBack={() => setScreen('login')} />
-  if (screen === 'admin') return <AdminPanel questions={questions} onUpdate={updateAnswer} onExit={() => setScreen('login')} />
+  if (screen === 'admin') return <AdminPanel questions={questions} onUpdate={updateAnswer} onAdd={addQuestion} onDelete={deleteQuestion} onExit={() => setScreen('login')} />
   if (screen === 'menu') return <MenuScreen user={user} onSelect={setScreen} onLogout={handleLogout} history={history} />
   if (screen === 'practice') return <PracticeScreen questions={questions} onExit={() => setScreen('menu')} />
   if (screen === 'exam') return <ExamScreen questions={questions} onFinish={handleExamFinish} onExit={() => setScreen('menu')} />
