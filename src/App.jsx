@@ -60,12 +60,11 @@ async function loadSavedData(base) {
   let loginConfig = DEFAULT_LOGIN_CONFIG
   let visitors = []
 
-  const [ansMap, custom, savedColleges, savedParticipants, savedStaff, savedPending, savedHistory, savedConfig, savedVisitors, adminSession, staffSession] = await Promise.all([
+  const [ansMap, custom, savedColleges, savedParticipants, savedStaff, savedPending, savedHistory, savedConfig, savedVisitors] = await Promise.all([
     sg('q_answers', true), sg('q_custom', true), sg('colleges', true),
     sg('participants', true), sg('staff', true),
     sg('pendingChanges', true), sg('changeHistory', true),
     sg('loginConfig', true), sg('visitors', true),
-    sg('adminSession'), sg('staffSession'),
   ])
 
   if (ansMap) questions = questions.map(q => ({ ...q, answer: ansMap[q.id] !== undefined ? (ansMap[q.id] || null) : q.answer }))
@@ -79,7 +78,8 @@ async function loadSavedData(base) {
   if (savedVisitors) visitors = savedVisitors
 
   questions = await loadEditMarks(questions)
-  return { questions, colleges, participants, staff, pendingChanges, changeHistory, loginConfig, visitors, adminSession, staffSession }
+  questions = await loadEditMarks(questions)
+  return { questions, colleges, participants, staff, pendingChanges, changeHistory, loginConfig, visitors }
 }
 
 async function persistQuestions(questions) {
@@ -1498,13 +1498,6 @@ export default function App() {
       setPendingChanges(d.pendingChanges)
       setChangeHistory(d.changeHistory)
       setLoginConfig(d.loginConfig)
-      // Restore admin or staff session after page refresh
-      if (d.adminSession) {
-        setScreen('admin')
-      } else if (d.staffSession) {
-        setCurrentStaff(d.staffSession)
-        setScreen('staff')
-      }
     })
   }, [])
 
@@ -1608,9 +1601,9 @@ export default function App() {
   }
 
   if (screen === 'login') return <LoginScreen onLogin={handleUserLogin} onAdmin={() => setScreen('admin-login')} onStaff={() => setScreen('staff-login')} colleges={colleges} loginConfig={loginConfig} />
-  if (screen === 'admin-login') return <AdminLoginScreen onLogin={() => { ss('adminSession', true); setScreen('admin') }} onBack={() => setScreen('login')} />
-  if (screen === 'staff-login') return <StaffLoginScreen staff={staff} onLogin={m => { ss('staffSession', m); setCurrentStaff(m); setScreen('staff') }} onBack={() => setScreen('login')} />
-  if (screen === 'staff') return <StaffPanel staffMember={currentStaff} questions={questions} onSubmitChange={handleStaffSubmit} onExit={() => { ss('staffSession', null); setCurrentStaff(null); setScreen('login') }} />
+  if (screen === 'admin-login') return <AdminLoginScreen onLogin={() => setScreen('admin')} onBack={() => setScreen('login')} />
+  if (screen === 'staff-login') return <StaffLoginScreen staff={staff} onLogin={m => { setCurrentStaff(m); setScreen('staff') }} onBack={() => setScreen('login')} />
+  if (screen === 'staff') return <StaffPanel staffMember={currentStaff} questions={questions} onSubmitChange={handleStaffSubmit} onExit={() => { setCurrentStaff(null); setScreen('login') }} />
   if (screen === 'admin') return (
     <AdminPanel
       questions={questions} onUpdate={updateQuestion} onAdd={addQuestion} onDelete={deleteQuestion}
@@ -1621,7 +1614,7 @@ export default function App() {
       pendingChanges={pendingChanges} onApprove={handleApprove} onReject={handleReject}
       changeHistory={changeHistory}
       loginConfig={loginConfig} onLoginConfigChange={updateLoginConfig}
-      onExit={() => { ss('adminSession', null); setScreen('login') }}
+      onExit={() => setScreen('login')}
     />
   )
   if (screen === 'menu') return <MenuScreen user={user} onSelect={setScreen} onLogout={() => { setUser(null); setScreen('login') }} history={history} />
