@@ -29,23 +29,48 @@ function nowStr() {
 }
 
 // ══════════════════════════════════════════════════════════════
-//  STORAGE HELPERS  (localStorage — persists across server restarts)
+//  STORAGE HELPERS  (backend API → localStorage fallback)
 // ══════════════════════════════════════════════════════════════
+async function apiGet(key) {
+  try {
+    const res = await fetch(`/api/storage?key=${encodeURIComponent(key)}`)
+    if (!res.ok) return null
+    const { value } = await res.json()
+    return value !== undefined ? value : null
+  } catch { return null }
+}
+
+async function apiSet(key, value) {
+  try {
+    await fetch('/api/storage', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ key, value: value !== undefined ? value : null }),
+    })
+  } catch {}
+}
+
 async function sg(key, shared = false) {
   try {
     const storageKey = shared ? `shared_${key}` : key
-    const val = localStorage.getItem(storageKey)
-    return val ? JSON.parse(val) : null
+    // Try backend server first (persistent, shared across all users)
+    const serverVal = await apiGet(storageKey)
+    if (serverVal !== null && serverVal !== undefined) return serverVal
+    // Fall back to localStorage (browser-local backup)
+    const local = localStorage.getItem(storageKey)
+    return local ? JSON.parse(local) : null
   } catch { return null }
 }
+
 async function ss(key, val, shared = false) {
   try {
     const storageKey = shared ? `shared_${key}` : key
-    if (val === null || val === undefined) {
-      localStorage.removeItem(storageKey)
-    } else {
-      localStorage.setItem(storageKey, JSON.stringify(val))
-    }
+    const toStore = val !== null && val !== undefined ? val : null
+    // Save to backend server (persistent, shared across all users)
+    await apiSet(storageKey, toStore)
+    // Also save to localStorage as backup in case server is unavailable
+    if (toStore === null) localStorage.removeItem(storageKey)
+    else localStorage.setItem(storageKey, JSON.stringify(toStore))
   } catch {}
 }
 
