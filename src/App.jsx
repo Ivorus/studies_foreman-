@@ -28,6 +28,13 @@ function nowStr() {
   return new Date().toLocaleString('he-IL')
 }
 
+const API_BASE = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/$/, '')
+let sharedApiUnavailable = false
+
+function apiUrl(path) {
+  return API_BASE ? `${API_BASE}${path}` : path
+}
+
 // ══════════════════════════════════════════════════════════════
 //  STORAGE HELPERS
 // ══════════════════════════════════════════════════════════════
@@ -42,11 +49,14 @@ async function sg(key, shared = false) {
   }
 
   try {
-    const res = await fetch(`/api/data/${encodeURIComponent(key)}`)
-    if (!res.ok) throw new Error('fetch failed')
+    const res = await fetch(apiUrl(`/api/data/${encodeURIComponent(key)}`))
+    if (!res.ok) throw new Error(`fetch failed: ${res.status}`)
     const data = await res.json()
+    sharedApiUnavailable = false
     return data?.value ?? null
-  } catch {
+  } catch (err) {
+    sharedApiUnavailable = true
+    console.error('Shared storage read failed', key, err)
     return null
   }
 }
@@ -54,16 +64,28 @@ async function sg(key, shared = false) {
 async function ss(key, val, shared = false) {
   if (!shared) {
     try { localStorage.setItem(key, JSON.stringify(val)) } catch {}
-    return
+    return false
+  }
+
+  if (sharedApiUnavailable) {
+    console.error('Shared storage is unavailable. Skip write to avoid overwriting server data.', key)
+    return false
   }
 
   try {
-    await fetch(`/api/data/${encodeURIComponent(key)}`, {
+    const res = await fetch(apiUrl(`/api/data/${encodeURIComponent(key)}`), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ value: val }),
     })
-  } catch {}
+    if (!res.ok) throw new Error(`save failed: ${res.status}`)
+    sharedApiUnavailable = false
+    return true
+  } catch (err) {
+    sharedApiUnavailable = true
+    console.error('Shared storage write failed', key, err)
+    return false
+  }
 }
 
 const DEFAULT_LOGIN_CONFIG = {
