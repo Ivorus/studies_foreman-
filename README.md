@@ -16,4 +16,4 @@ npm run dev
 3. Done!
 
 ## סיסמת מנהל
-`admin123`
+
