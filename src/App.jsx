@@ -60,11 +60,12 @@ async function loadSavedData(base) {
   let loginConfig = DEFAULT_LOGIN_CONFIG
   let visitors = []
 
-  const [ansMap, custom, savedColleges, savedParticipants, savedStaff, savedPending, savedHistory, savedConfig, savedVisitors] = await Promise.all([
-    sg('q_answers'), sg('q_custom'), sg('colleges'),
+  const [ansMap, custom, savedColleges, savedParticipants, savedStaff, savedPending, savedHistory, savedConfig, savedVisitors, adminSession, staffSession] = await Promise.all([
+    sg('q_answers', true), sg('q_custom', true), sg('colleges', true),
     sg('participants', true), sg('staff', true),
     sg('pendingChanges', true), sg('changeHistory', true),
     sg('loginConfig', true), sg('visitors', true),
+    sg('adminSession'), sg('staffSession'),
   ])
 
   if (ansMap) questions = questions.map(q => ({ ...q, answer: ansMap[q.id] !== undefined ? (ansMap[q.id] || null) : q.answer }))
@@ -78,23 +79,22 @@ async function loadSavedData(base) {
   if (savedVisitors) visitors = savedVisitors
 
   questions = await loadEditMarks(questions)
-  questions = await loadEditMarks(questions)
-  return { questions, colleges, participants, staff, pendingChanges, changeHistory, loginConfig, visitors }
+  return { questions, colleges, participants, staff, pendingChanges, changeHistory, loginConfig, visitors, adminSession, staffSession }
 }
 
 async function persistQuestions(questions) {
   const map = {}
   questions.forEach(q => { map[q.id] = q.answer || null })
-  await ss('q_answers', map)
-  await ss('q_custom', questions.filter(q => q.custom === true))
+  await ss('q_answers', map, true)
+  await ss('q_custom', questions.filter(q => q.custom === true), true)
   // persist edit marks separately so they survive reloads
   const editMap = {}
   questions.forEach(q => { if (q.editedAt) editMap[q.id] = q.editedAt })
-  await ss('q_edits', editMap)
+  await ss('q_edits', editMap, true)
 }
 
 async function loadEditMarks(questions) {
-  const editMap = await sg('q_edits')
+  const editMap = await sg('q_edits', true)
   if (!editMap) return questions
   return questions.map(q => editMap[q.id] ? { ...q, editedAt: editMap[q.id] } : q)
 }
@@ -1498,6 +1498,13 @@ export default function App() {
       setPendingChanges(d.pendingChanges)
       setChangeHistory(d.changeHistory)
       setLoginConfig(d.loginConfig)
+      // Restore admin or staff session after page refresh
+      if (d.adminSession) {
+        setScreen('admin')
+      } else if (d.staffSession) {
+        setCurrentStaff(d.staffSession)
+        setScreen('staff')
+      }
     })
   }, [])
 
@@ -1531,9 +1538,8 @@ export default function App() {
     })
   }
 
-  function updateColleges(next) { setColleges(next); ss('colleges', next) }
+  function updateColleges(next) { setColleges(next); ss('colleges', next, true) }
   function updateStaff(next) { setStaff(next); ss('staff', next, true) }
-  function updateLoginConfig(cfg) { setLoginConfig(cfg); ss('loginConfig', cfg, true) }
   function updateLoginConfig(cfg) { setLoginConfig(cfg); ss('loginConfig', cfg, true) }
 
   async function handleExamFinish(result) {
@@ -1602,9 +1608,9 @@ export default function App() {
   }
 
   if (screen === 'login') return <LoginScreen onLogin={handleUserLogin} onAdmin={() => setScreen('admin-login')} onStaff={() => setScreen('staff-login')} colleges={colleges} loginConfig={loginConfig} />
-  if (screen === 'admin-login') return <AdminLoginScreen onLogin={() => setScreen('admin')} onBack={() => setScreen('login')} />
-  if (screen === 'staff-login') return <StaffLoginScreen staff={staff} onLogin={m => { setCurrentStaff(m); setScreen('staff') }} onBack={() => setScreen('login')} />
-  if (screen === 'staff') return <StaffPanel staffMember={currentStaff} questions={questions} onSubmitChange={handleStaffSubmit} onExit={() => { setCurrentStaff(null); setScreen('login') }} />
+  if (screen === 'admin-login') return <AdminLoginScreen onLogin={() => { ss('adminSession', true); setScreen('admin') }} onBack={() => setScreen('login')} />
+  if (screen === 'staff-login') return <StaffLoginScreen staff={staff} onLogin={m => { ss('staffSession', m); setCurrentStaff(m); setScreen('staff') }} onBack={() => setScreen('login')} />
+  if (screen === 'staff') return <StaffPanel staffMember={currentStaff} questions={questions} onSubmitChange={handleStaffSubmit} onExit={() => { ss('staffSession', null); setCurrentStaff(null); setScreen('login') }} />
   if (screen === 'admin') return (
     <AdminPanel
       questions={questions} onUpdate={updateQuestion} onAdd={addQuestion} onDelete={deleteQuestion}
@@ -1615,7 +1621,7 @@ export default function App() {
       pendingChanges={pendingChanges} onApprove={handleApprove} onReject={handleReject}
       changeHistory={changeHistory}
       loginConfig={loginConfig} onLoginConfigChange={updateLoginConfig}
-      onExit={() => setScreen('login')}
+      onExit={() => { ss('adminSession', null); setScreen('login') }}
     />
   )
   if (screen === 'menu') return <MenuScreen user={user} onSelect={setScreen} onLogout={() => { setUser(null); setScreen('login') }} history={history} />
