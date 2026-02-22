@@ -38,6 +38,18 @@ async function ss(key, val, shared = false) {
   try { await window.storage.set(key, JSON.stringify(val), shared) } catch {}
 }
 
+const DEFAULT_LOGIN_CONFIG = {
+  title: 'מנהל עבודה בניין',
+  subtitle: 'מערכת הכנה לבחינות',
+  emoji: '🏗️',
+  fields: [
+    { id: 'first', label: 'שם פרטי', type: 'text', placeholder: 'שם פרטי', required: true, half: true },
+    { id: 'last', label: 'שם משפחה', type: 'text', placeholder: 'שם משפחה', required: true, half: true },
+    { id: 'tz', label: 'תעודת זהות', type: 'numeric', placeholder: '9 ספרות', required: true, maxLength: 9, half: false },
+    { id: 'college', label: 'מכללה', type: 'select', required: true, half: false },
+  ]
+}
+
 async function loadSavedData(base) {
   let questions = [...base]
   let colleges = DEFAULT_COLLEGES
@@ -45,11 +57,14 @@ async function loadSavedData(base) {
   let staff = []
   let pendingChanges = []
   let changeHistory = []
+  let loginConfig = DEFAULT_LOGIN_CONFIG
+  let visitors = []
 
-  const [ansMap, custom, savedColleges, savedParticipants, savedStaff, savedPending, savedHistory] = await Promise.all([
+  const [ansMap, custom, savedColleges, savedParticipants, savedStaff, savedPending, savedHistory, savedConfig, savedVisitors] = await Promise.all([
     sg('q_answers'), sg('q_custom'), sg('colleges'),
     sg('participants', true), sg('staff', true),
     sg('pendingChanges', true), sg('changeHistory', true),
+    sg('loginConfig', true), sg('visitors', true),
   ])
 
   if (ansMap) questions = questions.map(q => ({ ...q, answer: ansMap[q.id] !== undefined ? (ansMap[q.id] || null) : q.answer }))
@@ -59,8 +74,12 @@ async function loadSavedData(base) {
   if (savedStaff) staff = savedStaff
   if (savedPending) pendingChanges = savedPending
   if (savedHistory) changeHistory = savedHistory
+  if (savedConfig) loginConfig = savedConfig
+  if (savedVisitors) visitors = savedVisitors
 
-  return { questions, colleges, participants, staff, pendingChanges, changeHistory }
+  questions = await loadEditMarks(questions)
+  questions = await loadEditMarks(questions)
+  return { questions, colleges, participants, staff, pendingChanges, changeHistory, loginConfig, visitors }
 }
 
 async function persistQuestions(questions) {
@@ -68,46 +87,92 @@ async function persistQuestions(questions) {
   questions.forEach(q => { map[q.id] = q.answer || null })
   await ss('q_answers', map)
   await ss('q_custom', questions.filter(q => q.custom === true))
+  // persist edit marks separately so they survive reloads
+  const editMap = {}
+  questions.forEach(q => { if (q.editedAt) editMap[q.id] = q.editedAt })
+  await ss('q_edits', editMap)
+}
+
+async function loadEditMarks(questions) {
+  const editMap = await sg('q_edits')
+  if (!editMap) return questions
+  return questions.map(q => editMap[q.id] ? { ...q, editedAt: editMap[q.id] } : q)
 }
 
 // ══════════════════════════════════════════════════════════════
 //  LOGIN SCREEN
 // ══════════════════════════════════════════════════════════════
-function LoginScreen({ onLogin, onAdmin, onStaff, colleges }) {
-  const [first, setFirst] = useState('')
-  const [last, setLast] = useState('')
-  const [tz, setTz] = useState('')
-  const [college, setCollege] = useState('')
+function LoginScreen({ onLogin, onAdmin, onStaff, colleges, loginConfig }) {
+  const cfg = loginConfig || DEFAULT_LOGIN_CONFIG
+  const [values, setValues] = useState({})
   const [err, setErr] = useState('')
 
+  function setVal(id, v) { setValues(prev => ({ ...prev, [id]: v })) }
+  function getVal(id) { return values[id] || '' }
+
   function submit() {
-    if (!first.trim() || !last.trim()) return setErr('נא להזין שם פרטי ושם משפחה')
-    if (!/^\d{9}$/.test(tz)) return setErr('תעודת זהות חייבת להכיל 9 ספרות בדיוק')
-    if (!college) return setErr('נא לבחור מכללה')
+    for (const f of cfg.fields) {
+      if (f.required && !getVal(f.id).trim()) return setErr(`נא למלא: ${f.label}`)
+    }
+    const tzField = cfg.fields.find(f => f.id === 'tz')
+    if (tzField && !/^\d{9}$/.test(getVal('tz'))) return setErr('תעודת זהות חייבת להכיל 9 ספרות בדיוק')
     setErr('')
-    onLogin({ first, last, tz, college })
+    const userData = {}
+    cfg.fields.forEach(f => { userData[f.id] = getVal(f.id) })
+    // always ensure tz for participant tracking
+    if (!userData.tz) userData.tz = `anon_${Date.now()}`
+    onLogin(userData)
+  }
+
+  // group fields into pairs for half-width
+  const rows = []
+  let i = 0
+  while (i < cfg.fields.length) {
+    const f = cfg.fields[i]
+    if (f.half && cfg.fields[i + 1]?.half) {
+      rows.push([f, cfg.fields[i + 1]])
+      i += 2
+    } else {
+      rows.push([f])
+      i++
+    }
   }
 
   return (
     <div style={S.loginBg}>
       <div style={S.loginCard}>
         <div style={S.loginLogo}>
-          <span style={{ fontSize: 56 }}>🏗️</span>
-          <h1 style={S.loginTitle}>מנהל עבודה בניין</h1>
-          <p style={S.loginSub}>מערכת הכנה לבחינות</p>
+          <span style={{ fontSize: 56 }}>{cfg.emoji || '🏗️'}</span>
+          <h1 style={S.loginTitle}>{cfg.title || 'מנהל עבודה בניין'}</h1>
+          <p style={S.loginSub}>{cfg.subtitle || 'מערכת הכנה לבחינות'}</p>
         </div>
-        <div style={S.row2}>
-          <Field label="שם פרטי" value={first} onChange={setFirst} placeholder="שם פרטי" />
-          <Field label="שם משפחה" value={last} onChange={setLast} placeholder="שם משפחה" />
-        </div>
-        <Field label="תעודת זהות" value={tz} onChange={v => setTz(v.replace(/\D/g, ''))} placeholder="9 ספרות" maxLength={9} inputMode="numeric" />
-        <div style={S.formGroup}>
-          <label style={S.label}>מכללה</label>
-          <select style={S.input} value={college} onChange={e => setCollege(e.target.value)}>
-            <option value="">-- בחר מכללה --</option>
-            {colleges.map(c => <option key={c}>{c}</option>)}
-          </select>
-        </div>
+        {rows.map((row, ri) => (
+          <div key={ri} style={row.length === 2 ? S.row2 : {}}>
+            {row.map(f => {
+              if (f.type === 'select') return (
+                <div key={f.id} style={S.formGroup}>
+                  <label style={S.label}>{f.label}{f.required ? ' *' : ''}</label>
+                  <select style={S.input} value={getVal(f.id)} onChange={e => setVal(f.id, e.target.value)}>
+                    <option value="">-- בחר --</option>
+                    {colleges.map(c => <option key={c}>{c}</option>)}
+                  </select>
+                </div>
+              )
+              return (
+                <div key={f.id} style={S.formGroup}>
+                  <label style={S.label}>{f.label}{f.required ? ' *' : ''}</label>
+                  <input style={S.input} value={getVal(f.id)} placeholder={f.placeholder || ''}
+                    maxLength={f.maxLength} inputMode={f.type === 'numeric' ? 'numeric' : undefined}
+                    onChange={e => {
+                      let v = e.target.value
+                      if (f.type === 'numeric') v = v.replace(/\D/g, '')
+                      setVal(f.id, v)
+                    }} />
+                </div>
+              )
+            })}
+          </div>
+        ))}
         {err && <div style={S.errBox}>{err}</div>}
         <button style={S.btnPrimary} onClick={submit}>כניסה למערכת ←</button>
         <div style={{ textAlign: 'center', marginTop: 16, display: 'flex', justifyContent: 'center', gap: 24 }}>
@@ -562,7 +627,7 @@ function StaffPanel({ staffMember, questions, onSubmitChange, onExit }) {
 // ══════════════════════════════════════════════════════════════
 //  ADMIN PANEL
 // ══════════════════════════════════════════════════════════════
-function AdminPanel({ questions, onUpdate, onAdd, onDelete, colleges, onCollegesChange, participants, onDeleteParticipant, staff, onStaffChange, pendingChanges, onApprove, onReject, changeHistory, onExit }) {
+function AdminPanel({ questions, onUpdate, onAdd, onDelete, colleges, onCollegesChange, participants, onDeleteParticipant, visitors, staff, onStaffChange, pendingChanges, onApprove, onReject, changeHistory, loginConfig, onLoginConfigChange, onExit }) {
   const [tab, setTab] = useState('list')
   const [search, setSearch] = useState('')
   const [editId, setEditId] = useState(null)
@@ -604,6 +669,8 @@ function AdminPanel({ questions, onUpdate, onAdd, onDelete, colleges, onColleges
         <button style={tabStyle('participants')} onClick={() => setTab('participants')}>👥 משתתפים</button>
         <button style={tabStyle('staff')} onClick={() => setTab('staff')}>👤 עובדים</button>
         <button style={tabStyle('colleges')} onClick={() => setTab('colleges')}>🏫 מוסדות</button>
+        <button style={tabStyle('visitors')} onClick={() => setTab('visitors')}>📊 כניסות</button>
+        <button style={tabStyle('loginpage')} onClick={() => setTab('loginpage')}>🎨 דף כניסה</button>
       </div>
 
       {/* LIST */}
@@ -623,6 +690,7 @@ function AdminPanel({ questions, onUpdate, onAdd, onDelete, colleges, onColleges
                   <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
                     <span style={S.qNum}>שאלה {q.id}</span>
                     {isCustom && <span style={{ ...S.ansBadge, background: '#ede9fe', color: '#6d28d9' }}>✨ חדש</span>}
+                    {!isCustom && q.editedAt && <span style={{ ...S.ansBadge, background: '#fef9c3', color: '#92400e' }} title={`נערך: ${q.editedAt}`}>✏️ נערך</span>}
                     {wasSaved && <span style={{ ...S.ansBadge, ...S.ansBadgeGreen }}>✅ נשמר</span>}
                     <span style={{ ...S.ansBadge, ...(q.answer ? S.ansBadgeGreen : S.ansBadgeYellow) }}>
                       {q.answer ? `תשובה: ${q.answer}` : 'ללא תשובה'}
@@ -679,6 +747,14 @@ function AdminPanel({ questions, onUpdate, onAdd, onDelete, colleges, onColleges
 
       {/* COLLEGES */}
       {tab === 'colleges' && <CollegesTab colleges={colleges} onChange={onCollegesChange} />}
+      {tab === 'visitors' && <VisitorsTab visitors={visitors} />}
+      {tab === 'loginpage' && <LoginPageEditor config={loginConfig} onChange={onLoginConfigChange} colleges={colleges} />}
+
+      {/* VISITORS */}
+      {tab === 'visitors' && <VisitorsTab visitors={visitors} />}
+
+      {/* LOGIN PAGE EDITOR */}
+      {tab === 'loginpage' && <LoginPageEditor config={loginConfig} onChange={onLoginConfigChange} colleges={colleges} />}
 
       {deleteId !== null && (
         <Modal title="למחוק שאלה זו?" body="פעולה זו אינה ניתנת לביטול" confirmLabel="מחק" cancelLabel="ביטול"
@@ -1055,6 +1131,259 @@ function CollegesTab({ colleges, onChange }) {
   )
 }
 
+
+// ══════════════════════════════════════════════════════════════
+//  VISITORS TAB
+// ══════════════════════════════════════════════════════════════
+function VisitorsTab({ visitors }) {
+  const [search, setSearch] = useState('')
+  const [filter, setFilter] = useState('all') // all | exam | noexam
+
+  const filtered = visitors.filter(v => {
+    const matchSearch = `${v.name} ${v.tz} ${v.college}`.toLowerCase().includes(search.toLowerCase())
+    if (!matchSearch) return false
+    if (filter === 'exam') return v.exam != null
+    if (filter === 'noexam') return v.exam == null
+    return true
+  })
+
+  const totalExams = visitors.filter(v => v.exam).length
+  const totalPassed = visitors.filter(v => v.exam?.passed).length
+
+  return (
+    <div style={S.container}>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 10, marginBottom: 16 }}>
+        <div style={{ ...S.adminCard, textAlign: 'center', marginBottom: 0 }}>
+          <div style={{ fontSize: 28, fontWeight: 800, color: 'var(--blue)' }}>{visitors.length}</div>
+          <div style={{ fontSize: 12, color: 'var(--gray-400)' }}>כניסות</div>
+        </div>
+        <div style={{ ...S.adminCard, textAlign: 'center', marginBottom: 0 }}>
+          <div style={{ fontSize: 28, fontWeight: 800, color: '#8b5cf6' }}>{totalExams}</div>
+          <div style={{ fontSize: 12, color: 'var(--gray-400)' }}>מבחנים</div>
+        </div>
+        <div style={{ ...S.adminCard, textAlign: 'center', marginBottom: 0 }}>
+          <div style={{ fontSize: 28, fontWeight: 800, color: 'var(--green)' }}>{totalPassed}</div>
+          <div style={{ fontSize: 12, color: 'var(--gray-400)' }}>עברו</div>
+        </div>
+      </div>
+
+      <input style={{ ...S.input, marginBottom: 10 }} placeholder="חפש לפי שם, ת.ז. או מוסד..."
+        value={search} onChange={e => setSearch(e.target.value)} />
+
+      <div style={{ display: 'flex', gap: 8, marginBottom: 16, flexWrap: 'wrap' }}>
+        {[['all','הכל'],['exam','עם מבחן'],['noexam','ללא מבחן']].map(([v, lbl]) => (
+          <button key={v} style={{ ...S.btnNav, padding: '7px 14px', fontSize: 12, ...(filter === v ? S.btnBlue : {}) }}
+            onClick={() => setFilter(v)}>{lbl}</button>
+        ))}
+        <span style={{ fontSize: 12, color: 'var(--gray-400)', marginRight: 'auto', alignSelf: 'center' }}>{filtered.length} רשומות</span>
+      </div>
+
+      {filtered.length === 0 && <p style={{ textAlign: 'center', color: 'var(--gray-400)', padding: 40 }}>אין נתונים</p>}
+
+      {filtered.map((v, i) => (
+        <div key={i} style={{ ...S.adminCard, borderRight: `4px solid ${v.exam?.passed ? 'var(--green)' : v.exam ? 'var(--red)' : 'var(--gray-200)'}`, padding: '14px 16px' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: 6 }}>
+            <div>
+              <div style={{ fontWeight: 700, fontSize: 14 }}>{v.name || '—'}</div>
+              <div style={{ fontSize: 12, color: 'var(--gray-400)' }}>
+                {v.tz && !v.tz.startsWith('anon') ? `ת.ז: ${v.tz} | ` : ''}{v.college || '—'}
+              </div>
+              <div style={{ fontSize: 11, color: 'var(--gray-400)', marginTop: 2 }}>🕐 {v.loginAt}</div>
+            </div>
+            <div style={{ textAlign: 'left' }}>
+              {v.exam ? (
+                <div>
+                  <span style={{ ...S.ansBadge, ...(v.exam.passed ? S.ansBadgeGreen : { background: '#fef2f2', color: 'var(--red)' }) }}>
+                    {v.exam.passed ? '✅ עבר' : '❌ לא עבר'} {v.exam.correct}/{v.exam.total}
+                  </span>
+                  <div style={{ fontSize: 11, color: 'var(--gray-400)', marginTop: 4 }}>{v.exam.date}</div>
+                </div>
+              ) : (
+                <span style={{ ...S.ansBadge, background: 'var(--gray-100)', color: 'var(--gray-500)' }}>לא נבחן</span>
+              )}
+            </div>
+          </div>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+// ══════════════════════════════════════════════════════════════
+//  LOGIN PAGE EDITOR
+// ══════════════════════════════════════════════════════════════
+function LoginPageEditor({ config, onChange, colleges }) {
+  const [cfg, setCfg] = useState(config || DEFAULT_LOGIN_CONFIG)
+  const [saved, setSaved] = useState(false)
+  const [editFieldIdx, setEditFieldIdx] = useState(null)
+  const [preview, setPreview] = useState(false)
+
+  function update(key, val) { setCfg(c => ({ ...c, [key]: val })) }
+
+  function updateField(idx, key, val) {
+    setCfg(c => {
+      const fields = [...c.fields]
+      fields[idx] = { ...fields[idx], [key]: val }
+      return { ...c, fields }
+    })
+  }
+
+  function addField() {
+    setCfg(c => ({
+      ...c,
+      fields: [...c.fields, { id: `field_${Date.now()}`, label: 'שדה חדש', type: 'text', placeholder: '', required: false, half: false }]
+    }))
+    setEditFieldIdx(cfg.fields.length)
+  }
+
+  function removeField(idx) {
+    setCfg(c => ({ ...c, fields: c.fields.filter((_, i) => i !== idx) }))
+    setEditFieldIdx(null)
+  }
+
+  function moveField(idx, dir) {
+    setCfg(c => {
+      const fields = [...c.fields]
+      const newIdx = idx + dir
+      if (newIdx < 0 || newIdx >= fields.length) return c
+      ;[fields[idx], fields[newIdx]] = [fields[newIdx], fields[idx]]
+      return { ...c, fields }
+    })
+    setEditFieldIdx(idx + dir)
+  }
+
+  function save() {
+    onChange(cfg)
+    setSaved(true)
+    setTimeout(() => setSaved(false), 2500)
+  }
+
+  function reset() {
+    const fresh = DEFAULT_LOGIN_CONFIG
+    setCfg(fresh)
+    onChange(fresh)
+  }
+
+  return (
+    <div style={S.container}>
+      {saved && (
+        <div style={{ ...S.adminCard, background: '#ecfdf5', border: '1px solid #a7f3d0', textAlign: 'center', color: '#065f46', fontWeight: 700, marginBottom: 12 }}>
+          ✅ השינויים נשמרו!
+        </div>
+      )}
+
+      {/* Header settings */}
+      <div style={S.adminCard}>
+        <h3 style={{ fontWeight: 700, fontSize: 15, marginBottom: 16, color: 'var(--gray-800)' }}>🏷️ כותרת הדף</h3>
+        <div style={S.formGroup}>
+          <label style={S.label}>אמוג'י</label>
+          <input style={{ ...S.input, maxWidth: 80 }} value={cfg.emoji || '🏗️'} onChange={e => update('emoji', e.target.value)} />
+        </div>
+        <div style={S.formGroup}>
+          <label style={S.label}>כותרת ראשית</label>
+          <input style={S.input} value={cfg.title || ''} onChange={e => update('title', e.target.value)} />
+        </div>
+        <div style={S.formGroup}>
+          <label style={S.label}>כתובית (subtitle)</label>
+          <input style={S.input} value={cfg.subtitle || ''} onChange={e => update('subtitle', e.target.value)} />
+        </div>
+      </div>
+
+      {/* Fields editor */}
+      <div style={S.adminCard}>
+        <h3 style={{ fontWeight: 700, fontSize: 15, marginBottom: 4, color: 'var(--gray-800)' }}>📝 שדות הטופס</h3>
+        <p style={{ fontSize: 12, color: 'var(--gray-400)', marginBottom: 16 }}>ניתן להוסיף, לערוך, למחוק ולסדר שדות</p>
+
+        {cfg.fields.map((f, idx) => {
+          const isEdit = editFieldIdx === idx
+          const isSystem = ['tz', 'college'].includes(f.id)
+          return (
+            <div key={f.id || idx} style={{ ...S.adminCard, background: isEdit ? 'var(--blue-pale)' : 'var(--gray-50)', border: isEdit ? '2px solid var(--blue-light)' : '1px solid var(--gray-200)', marginBottom: 8 }}>
+              {isEdit ? (
+                <div>
+                  <div style={S.row2}>
+                    <div style={S.formGroup}>
+                      <label style={S.label}>תווית (Label)</label>
+                      <input style={S.input} value={f.label} onChange={e => updateField(idx, 'label', e.target.value)} />
+                    </div>
+                    <div style={S.formGroup}>
+                      <label style={S.label}>Placeholder</label>
+                      <input style={S.input} value={f.placeholder || ''} onChange={e => updateField(idx, 'placeholder', e.target.value)} />
+                    </div>
+                  </div>
+                  <div style={S.row2}>
+                    <div style={S.formGroup}>
+                      <label style={S.label}>סוג שדה</label>
+                      <select style={S.input} value={f.type} onChange={e => updateField(idx, 'type', e.target.value)} disabled={isSystem}>
+                        <option value="text">טקסט</option>
+                        <option value="numeric">מספרי</option>
+                        <option value="select">רשימה (מוסד)</option>
+                      </select>
+                    </div>
+                    <div style={S.formGroup}>
+                      <label style={S.label}>מקסימום תווים</label>
+                      <input style={S.input} type="number" value={f.maxLength || ''} onChange={e => updateField(idx, 'maxLength', parseInt(e.target.value) || undefined)} />
+                    </div>
+                  </div>
+                  <div style={{ display: 'flex', gap: 16, marginBottom: 12 }}>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, cursor: 'pointer' }}>
+                      <input type="checkbox" checked={!!f.required} onChange={e => updateField(idx, 'required', e.target.checked)} />
+                      חובה
+                    </label>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, cursor: 'pointer' }}>
+                      <input type="checkbox" checked={!!f.half} onChange={e => updateField(idx, 'half', e.target.checked)} />
+                      חצי רוחב (2 בשורה)
+                    </label>
+                  </div>
+                  <div style={{ display: 'flex', gap: 8 }}>
+                    <button style={{ ...S.btnEdit, ...S.btnBlue }} onClick={() => setEditFieldIdx(null)}>✓ סגור</button>
+                    {!isSystem && <button style={{ ...S.btnEdit, background: '#fef2f2', color: 'var(--red)', border: '1px solid #fecaca' }} onClick={() => removeField(idx)}>🗑️ מחק</button>}
+                  </div>
+                </div>
+              ) : (
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <div>
+                    <span style={{ fontWeight: 700, fontSize: 14 }}>{f.label}</span>
+                    {f.required && <span style={{ ...S.ansBadge, background: '#fee2e2', color: 'var(--red)', marginRight: 8, marginLeft: 0 }}>חובה</span>}
+                    {f.half && <span style={{ ...S.ansBadge, background: 'var(--blue-pale)', color: 'var(--blue)', marginRight: 4 }}>חצי</span>}
+                    <div style={{ fontSize: 12, color: 'var(--gray-400)', marginTop: 2 }}>{f.type === 'select' ? 'רשימת מוסדות' : f.type === 'numeric' ? 'מספרי' : 'טקסט'} {f.placeholder ? `| "${f.placeholder}"` : ''}</div>
+                  </div>
+                  <div style={{ display: 'flex', gap: 4 }}>
+                    <button style={{ ...S.btnEdit, padding: '4px 8px' }} onClick={() => moveField(idx, -1)} disabled={idx === 0}>▲</button>
+                    <button style={{ ...S.btnEdit, padding: '4px 8px' }} onClick={() => moveField(idx, 1)} disabled={idx === cfg.fields.length - 1}>▼</button>
+                    <button style={S.btnEdit} onClick={() => setEditFieldIdx(idx)}>✏️</button>
+                  </div>
+                </div>
+              )}
+            </div>
+          )
+        })}
+
+        <button style={{ ...S.btnNav, width: '100%', marginTop: 8, border: '2px dashed var(--gray-300)', color: 'var(--gray-500)' }}
+          onClick={addField}>+ הוסף שדה חדש</button>
+      </div>
+
+      {/* Preview */}
+      <div style={S.adminCard}>
+        <button style={{ ...S.btnNav, width: '100%', marginBottom: preview ? 16 : 0 }} onClick={() => setPreview(p => !p)}>
+          {preview ? '🙈 הסתר תצוגה מקדימה' : '👁️ תצוגה מקדימה'}
+        </button>
+        {preview && (
+          <div style={{ border: '2px solid var(--gray-200)', borderRadius: 16, overflow: 'hidden', transform: 'scale(0.85)', transformOrigin: 'top center' }}>
+            <LoginScreen onLogin={() => {}} onAdmin={() => {}} onStaff={() => {}} colleges={colleges} loginConfig={cfg} />
+          </div>
+        )}
+      </div>
+
+      <div style={{ display: 'flex', gap: 10 }}>
+        <button style={{ ...S.btnNav, ...S.btnGreen, flex: 2 }} onClick={save}>💾 שמור שינויים</button>
+        <button style={{ ...S.btnNav, flex: 1, fontSize: 12 }} onClick={reset}>↩️ איפוס</button>
+      </div>
+      <p style={{ fontSize: 12, color: 'var(--gray-400)', textAlign: 'center', marginTop: 8 }}>השינויים נשמרים לצמיתות ולא יאופסו</p>
+    </div>
+  )
+}
+
 // ══════════════════════════════════════════════════════════════
 //  SHARED COMPONENTS
 // ══════════════════════════════════════════════════════════════
@@ -1151,9 +1480,11 @@ export default function App() {
   const [questions, setQuestions] = useState(QUESTIONS_RAW)
   const [colleges, setColleges] = useState(DEFAULT_COLLEGES)
   const [participants, setParticipants] = useState([])
+  const [visitors, setVisitors] = useState([])
   const [staff, setStaff] = useState([])
   const [pendingChanges, setPendingChanges] = useState([])
   const [changeHistory, setChangeHistory] = useState([])
+  const [loginConfig, setLoginConfig] = useState(DEFAULT_LOGIN_CONFIG)
   const [history, setHistory] = useState([])
   const [examResult, setExamResult] = useState(null)
 
@@ -1162,9 +1493,11 @@ export default function App() {
       setQuestions(d.questions)
       setColleges(d.colleges)
       setParticipants(d.participants)
+      setVisitors(d.visitors)
       setStaff(d.staff)
       setPendingChanges(d.pendingChanges)
       setChangeHistory(d.changeHistory)
+      setLoginConfig(d.loginConfig)
     })
   }, [])
 
@@ -1172,8 +1505,8 @@ export default function App() {
     setQuestions(prev => {
       const next = prev.map(q => {
         if (q.id !== id) return q
-        if (typeof data === 'string') return { ...q, answer: data || null }
-        return { ...q, ...data }
+        if (typeof data === 'string') return { ...q, answer: data || null, editedAt: nowStr() }
+        return { ...q, ...data, editedAt: nowStr() }
       })
       persistQuestions(next)
       return next
@@ -1200,12 +1533,15 @@ export default function App() {
 
   function updateColleges(next) { setColleges(next); ss('colleges', next) }
   function updateStaff(next) { setStaff(next); ss('staff', next, true) }
+  function updateLoginConfig(cfg) { setLoginConfig(cfg); ss('loginConfig', cfg, true) }
+  function updateLoginConfig(cfg) { setLoginConfig(cfg); ss('loginConfig', cfg, true) }
 
   async function handleExamFinish(result) {
-    const entry = { ...result, tz: user.tz, first: user.first, last: user.last, college: user.college }
+    const entry = { ...result, tz: user.tz, first: user.first || '', last: user.last || '', college: user.college || '' }
     setExamResult(result)
     setHistory(h => [result, ...h])
     setScreen('result')
+    // Update participants
     const all = (await sg('participants', true)) || []
     const idx = all.findIndex(p => p.tz === entry.tz)
     const rec = { date: entry.date, correct: entry.correct, total: entry.total, passed: entry.passed }
@@ -1213,6 +1549,12 @@ export default function App() {
     else all.push({ tz: entry.tz, first: entry.first, last: entry.last, college: entry.college, exams: [rec] })
     await ss('participants', all, true)
     setParticipants(all)
+    // Update visitor record with exam result
+    const allV = (await sg('visitors', true)) || []
+    const vi = allV.findIndex(v => v.tz === entry.tz && !v.exam)
+    if (vi >= 0) allV[vi].exam = rec
+    await ss('visitors', allV, true)
+    setVisitors(allV)
   }
 
   function deleteParticipant(tz) {
@@ -1246,7 +1588,20 @@ export default function App() {
     setChangeHistory(nextHistory); ss('changeHistory', nextHistory, true)
   }
 
-  if (screen === 'login') return <LoginScreen onLogin={u => { setUser(u); setHistory([]); setScreen('menu') }} onAdmin={() => setScreen('admin-login')} onStaff={() => setScreen('staff-login')} colleges={colleges} />
+  async function handleUserLogin(u) {
+    setUser(u)
+    setHistory([])
+    setScreen('menu')
+    // Track visitor
+    const allVisitors = (await sg('visitors', true)) || []
+    const rec = { tz: u.tz || `anon_${Date.now()}`, name: `${u.first || ''} ${u.last || ''}`.trim(), college: u.college || '', loginAt: nowStr(), exam: null }
+    allVisitors.unshift(rec)
+    const trimmed = allVisitors.slice(0, 1000) // keep last 1000
+    await ss('visitors', trimmed, true)
+    setVisitors(trimmed)
+  }
+
+  if (screen === 'login') return <LoginScreen onLogin={handleUserLogin} onAdmin={() => setScreen('admin-login')} onStaff={() => setScreen('staff-login')} colleges={colleges} loginConfig={loginConfig} />
   if (screen === 'admin-login') return <AdminLoginScreen onLogin={() => setScreen('admin')} onBack={() => setScreen('login')} />
   if (screen === 'staff-login') return <StaffLoginScreen staff={staff} onLogin={m => { setCurrentStaff(m); setScreen('staff') }} onBack={() => setScreen('login')} />
   if (screen === 'staff') return <StaffPanel staffMember={currentStaff} questions={questions} onSubmitChange={handleStaffSubmit} onExit={() => { setCurrentStaff(null); setScreen('login') }} />
@@ -1255,9 +1610,11 @@ export default function App() {
       questions={questions} onUpdate={updateQuestion} onAdd={addQuestion} onDelete={deleteQuestion}
       colleges={colleges} onCollegesChange={updateColleges}
       participants={participants} onDeleteParticipant={deleteParticipant}
+      visitors={visitors}
       staff={staff} onStaffChange={updateStaff}
       pendingChanges={pendingChanges} onApprove={handleApprove} onReject={handleReject}
       changeHistory={changeHistory}
+      loginConfig={loginConfig} onLoginConfigChange={updateLoginConfig}
       onExit={() => setScreen('login')}
     />
   )
