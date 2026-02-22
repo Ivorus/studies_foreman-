@@ -31,32 +31,6 @@ function nowStr() {
 // ══════════════════════════════════════════════════════════════
 //  STORAGE HELPERS
 // ══════════════════════════════════════════════════════════════
-let sharedStoreCache = null
-
-async function loadSharedStore() {
-  if (sharedStoreCache) return sharedStoreCache
-  try {
-    const res = await fetch('/api/data')
-    if (!res.ok) throw new Error('fetch failed')
-    const data = await res.json()
-    sharedStoreCache = data && typeof data === 'object' && !Array.isArray(data) ? data : {}
-  } catch {
-    sharedStoreCache = {}
-  }
-  return sharedStoreCache
-}
-
-async function persistSharedStore() {
-  if (!sharedStoreCache) return
-  try {
-    await fetch('/api/data', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(sharedStoreCache),
-    })
-  } catch {}
-}
-
 async function sg(key, shared = false) {
   if (!shared) {
     try {
@@ -66,8 +40,15 @@ async function sg(key, shared = false) {
       return null
     }
   }
-  const store = await loadSharedStore()
-  return store[key] ?? null
+
+  try {
+    const res = await fetch(`/api/data/${encodeURIComponent(key)}`)
+    if (!res.ok) throw new Error('fetch failed')
+    const data = await res.json()
+    return data?.value ?? null
+  } catch {
+    return null
+  }
 }
 
 async function ss(key, val, shared = false) {
@@ -75,10 +56,14 @@ async function ss(key, val, shared = false) {
     try { localStorage.setItem(key, JSON.stringify(val)) } catch {}
     return
   }
-  const store = await loadSharedStore()
-  store[key] = val
-  sharedStoreCache = store
-  await persistSharedStore()
+
+  try {
+    await fetch(`/api/data/${encodeURIComponent(key)}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ value: val }),
+    })
+  } catch {}
 }
 
 const DEFAULT_LOGIN_CONFIG = {

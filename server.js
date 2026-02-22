@@ -36,6 +36,27 @@ function sendJson(res, status, payload) {
   res.end(JSON.stringify(payload));
 }
 
+
+function parseJsonBody(req, res, onSuccess) {
+  let body = "";
+  req.on("data", (chunk) => {
+    body += chunk;
+    if (body.length > 5 * 1024 * 1024) {
+      res.writeHead(413, { "Content-Type": "text/plain; charset=utf-8" });
+      res.end("Payload too large");
+      req.destroy();
+    }
+  });
+  req.on("end", () => {
+    try {
+      const parsed = body ? JSON.parse(body) : {};
+      onSuccess(parsed);
+    } catch {
+      sendJson(res, 400, { success: false, error: "Invalid JSON" });
+    }
+  });
+}
+
 function getMimeType(filePath) {
   const ext = path.extname(filePath).toLowerCase();
   if (ext === ".html") return "text/html; charset=utf-8";
@@ -90,7 +111,7 @@ function serveStatic(reqPath, res) {
 const server = http.createServer((req, res) => {
   const url = new URL(req.url || "/", `http://${req.headers.host || "localhost"}`);
 
-  if (req.method === "OPTIONS" && url.pathname === "/api/data") {
+  if (req.method === "OPTIONS" && (url.pathname === "/api/data" || url.pathname.startsWith("/api/data/"))) {
     sendJson(res, 200, { ok: true });
     return;
   }
@@ -101,24 +122,43 @@ const server = http.createServer((req, res) => {
   }
 
   if (req.method === "POST" && url.pathname === "/api/data") {
-    let body = "";
-    req.on("data", (chunk) => {
-      body += chunk;
-      if (body.length > 5 * 1024 * 1024) {
-        res.writeHead(413, { "Content-Type": "text/plain; charset=utf-8" });
-        res.end("Payload too large");
-        req.destroy();
-      }
+    parseJsonBody(req, res, (parsed) => {
+      writeData(parsed);
+      sendJson(res, 200, { success: true });
     });
-    req.on("end", () => {
-      try {
-        const parsed = body ? JSON.parse(body) : {};
-        writeData(parsed);
+    return;
+  }
+
+  if (url.pathname.startsWith("/api/data/")) {
+    let key = "";
+    try {
+      key = decodeURIComponent(url.pathname.slice("/api/data/".length));
+    } catch {
+      sendJson(res, 400, { success: false, error: "Invalid key encoding" });
+      return;
+    }
+    if (!key) {
+      sendJson(res, 400, { success: false, error: "Key is required" });
+      return;
+    }
+
+    if (req.method === "GET") {
+      const store = readData();
+      sendJson(res, 200, { value: store[key] ?? null });
+      return;
+    }
+
+    if (req.method === "POST") {
+      parseJsonBody(req, res, (parsed) => {
+        const store = readData();
+        store[key] = parsed?.value ?? null;
+        writeData(store);
         sendJson(res, 200, { success: true });
-      } catch {
-        sendJson(res, 400, { success: false, error: "Invalid JSON" });
-      }
-    });
+      });
+      return;
+    }
+
+    sendJson(res, 405, { success: false, error: "Method not allowed" });
     return;
   }
 
