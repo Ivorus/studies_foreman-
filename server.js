@@ -12,13 +12,15 @@ app.use(express.json());
 const DATA_FILE = process.env.DATA_FILE || "./server-data.json";
 
 function readData() {
-  if (!fs.existsSync(DATA_FILE)) return [];
-  return JSON.parse(fs.readFileSync(DATA_FILE, "utf8"));
+  if (!fs.existsSync(DATA_FILE)) return {};
+  const raw = JSON.parse(fs.readFileSync(DATA_FILE, "utf8"));
+  return raw && typeof raw === "object" && !Array.isArray(raw) ? raw : {};
 }
 
 function writeData(data) {
   fs.mkdirSync(path.dirname(DATA_FILE), { recursive: true });
-  fs.writeFileSync(DATA_FILE, JSON.stringify(data, null, 2));
+  const next = data && typeof data === "object" && !Array.isArray(data) ? data : {};
+  fs.writeFileSync(DATA_FILE, JSON.stringify(next, null, 2));
 }
 
 app.get("/api/data", (req, res) => {
