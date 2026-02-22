@@ -8,7 +8,7 @@ const __dirname = path.dirname(__filename);
 
 const PORT = Number(process.env.PORT || 3000);
 const DATA_FILE = process.env.DATA_FILE || "./server-data.json";
-const DIST_DIR = path.join(__dirname, "dist");
+const DIST_DIR = path.resolve(__dirname, "dist");
 
 function readData() {
   if (!fs.existsSync(DATA_FILE)) return {};
@@ -50,11 +50,22 @@ function getMimeType(filePath) {
 }
 
 function serveStatic(reqPath, res) {
-  const safePath = path.normalize(reqPath).replace(/^([.][.][/\\])+/, "");
-  let filePath = path.join(DIST_DIR, safePath === "/" ? "index.html" : safePath);
+  let decodedPath = "/";
+  try {
+    decodedPath = decodeURIComponent(reqPath || "/");
+  } catch {
+    res.writeHead(400, { "Content-Type": "text/plain; charset=utf-8" });
+    res.end("Bad request");
+    return;
+  }
 
-  if (!filePath.startsWith(DIST_DIR)) {
-    res.writeHead(403);
+  const cleanedPath = decodedPath.replace(/^\/+/, "");
+  const normalized = path.posix.normalize(cleanedPath);
+  const relativePath = normalized === "." || normalized === "" ? "index.html" : normalized;
+  const filePath = path.resolve(DIST_DIR, relativePath);
+
+  if (!filePath.startsWith(DIST_DIR + path.sep) && filePath !== path.resolve(DIST_DIR, "index.html")) {
+    res.writeHead(403, { "Content-Type": "text/plain; charset=utf-8" });
     res.end("Forbidden");
     return;
   }
@@ -65,7 +76,6 @@ function serveStatic(reqPath, res) {
     return;
   }
 
-  // SPA fallback
   const indexPath = path.join(DIST_DIR, "index.html");
   if (fs.existsSync(indexPath)) {
     res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
@@ -95,7 +105,7 @@ const server = http.createServer((req, res) => {
     req.on("data", (chunk) => {
       body += chunk;
       if (body.length > 5 * 1024 * 1024) {
-        res.writeHead(413);
+        res.writeHead(413, { "Content-Type": "text/plain; charset=utf-8" });
         res.end("Payload too large");
         req.destroy();
       }
