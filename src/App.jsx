@@ -29,13 +29,24 @@ function nowStr() {
 }
 
 // ══════════════════════════════════════════════════════════════
-//  STORAGE HELPERS
+//  STORAGE HELPERS  (localStorage — persists across server restarts)
 // ══════════════════════════════════════════════════════════════
 async function sg(key, shared = false) {
-  try { const r = await window.storage.get(key, shared); return r?.value ? JSON.parse(r.value) : null } catch { return null }
+  try {
+    const storageKey = shared ? `shared_${key}` : key
+    const val = localStorage.getItem(storageKey)
+    return val ? JSON.parse(val) : null
+  } catch { return null }
 }
 async function ss(key, val, shared = false) {
-  try { await window.storage.set(key, JSON.stringify(val), shared) } catch {}
+  try {
+    const storageKey = shared ? `shared_${key}` : key
+    if (val === null || val === undefined) {
+      localStorage.removeItem(storageKey)
+    } else {
+      localStorage.setItem(storageKey, JSON.stringify(val))
+    }
+  } catch {}
 }
 
 const DEFAULT_LOGIN_CONFIG = {
