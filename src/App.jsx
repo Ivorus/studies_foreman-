@@ -31,11 +31,54 @@ function nowStr() {
 // ══════════════════════════════════════════════════════════════
 //  STORAGE HELPERS
 // ══════════════════════════════════════════════════════════════
-async function sg(key, shared = false) {
-  try { const r = await window.storage.get(key, shared); return r?.value ? JSON.parse(r.value) : null } catch { return null }
+let sharedStoreCache = null
+
+async function loadSharedStore() {
+  if (sharedStoreCache) return sharedStoreCache
+  try {
+    const res = await fetch('/api/data')
+    if (!res.ok) throw new Error('fetch failed')
+    const data = await res.json()
+    sharedStoreCache = data && typeof data === 'object' && !Array.isArray(data) ? data : {}
+  } catch {
+    sharedStoreCache = {}
+  }
+  return sharedStoreCache
 }
+
+async function persistSharedStore() {
+  if (!sharedStoreCache) return
+  try {
+    await fetch('/api/data', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(sharedStoreCache),
+    })
+  } catch {}
+}
+
+async function sg(key, shared = false) {
+  if (!shared) {
+    try {
+      const raw = localStorage.getItem(key)
+      return raw ? JSON.parse(raw) : null
+    } catch {
+      return null
+    }
+  }
+  const store = await loadSharedStore()
+  return store[key] ?? null
+}
+
 async function ss(key, val, shared = false) {
-  try { await window.storage.set(key, JSON.stringify(val), shared) } catch {}
+  if (!shared) {
+    try { localStorage.setItem(key, JSON.stringify(val)) } catch {}
+    return
+  }
+  const store = await loadSharedStore()
+  store[key] = val
+  sharedStoreCache = store
+  await persistSharedStore()
 }
 
 const DEFAULT_LOGIN_CONFIG = {
@@ -77,7 +120,6 @@ async function loadSavedData(base) {
   if (savedConfig) loginConfig = savedConfig
   if (savedVisitors) visitors = savedVisitors
 
-  questions = await loadEditMarks(questions)
   questions = await loadEditMarks(questions)
   return { questions, colleges, participants, staff, pendingChanges, changeHistory, loginConfig, visitors }
 }
@@ -259,7 +301,9 @@ function PracticeScreen({ questions, onExit }) {
   return (
     <div style={S.screen}>
       <TopBar title="📚 תרגול" onExit={onExit} exitLabel="תפריט ראשי" />
-      <ProgressBar pct={pct} left={`שאלה ${idx + 1} מתוך ${qs.length}`} right={`${correct} נכון`} />
+      <div style={S.stickyUnderTop}>
+        <ProgressBar pct={pct} left={`שאלה ${idx + 1} מתוך ${qs.length}`} right={`${correct} נכון`} />
+      </div>
       <div style={S.container}>
         <QuestionCard q={q} letters={letters} sel={sel} revealed={revealed} onAnswer={answer} />
         <NavRow onPrev={() => setIdx(i => Math.max(0, i - 1))} prevDisabled={idx === 0}
@@ -296,7 +340,7 @@ function ExamScreen({ questions, onFinish, onExit }) {
           <span style={{ ...S.pill, background: '#dcfce7', color: 'var(--green)' }}>{countCorrect} ✓</span>
           <span style={{ ...S.pill, background: '#fee2e2', color: 'var(--red)' }}>{countWrong} ✗</span>
         </div>} />
-      <div style={S.examGrid}>
+      <div style={{ ...S.examGrid, ...S.stickyUnderTop }}>
         {qs.map((q, i) => {
           const a = answers[i]
           let bg = '#f1f5f9', color = '#94a3b8'
@@ -549,7 +593,7 @@ function StaffPanel({ staffMember, questions, onSubmitChange, onExit }) {
         <button style={S.btnExit} onClick={onExit}>יציאה</button>
       </div>
 
-      <div style={{ display: 'flex', background: '#111827', borderBottom: '2px solid #374151' }}>
+      <div style={S.adminTabs}>
         <button style={tabStyle('list')} onClick={() => { setTab('list'); setEditId(null) }}>📋 שאלות ({questions.length})</button>
         <button style={tabStyle('add')} onClick={() => { setTab('add'); setEditId(null) }}>➕ הוסף שאלה</button>
       </div>
@@ -1642,7 +1686,8 @@ const S = {
   errBox: { background: '#fef2f2', color: 'var(--red)', borderRadius: 10, padding: '12px 14px', fontSize: 13, marginBottom: 14, border: '1px solid #fecaca' },
   btnPrimary: { width: '100%', background: 'var(--blue)', color: 'white', border: 'none', borderRadius: 14, padding: 15, fontFamily: 'inherit', fontSize: 16, fontWeight: 700, cursor: 'pointer' },
   adminLink: { background: 'none', border: 'none', color: 'var(--gray-400)', fontSize: 12, cursor: 'pointer', fontFamily: 'inherit', textDecoration: 'underline' },
-  topbar: { background: '#1e3a8a', color: 'white', padding: '14px 20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', position: 'sticky', top: 0, zIndex: 100 },
+  topbar: { background: '#1e3a8a', color: 'white', padding: '14px 20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', position: 'sticky', top: 0, zIndex: 120 },
+  stickyUnderTop: { position: 'sticky', top: 62, zIndex: 110 },
   btnExit: { background: 'rgba(255,255,255,0.1)', border: '1px solid rgba(255,255,255,0.2)', color: 'white', padding: '6px 14px', borderRadius: 8, cursor: 'pointer', fontFamily: 'inherit', fontSize: 13 },
   pill: { padding: '5px 12px', borderRadius: 99, fontSize: 13, fontWeight: 700 },
   sectionTitle: { fontSize: 18, fontWeight: 700, marginBottom: 16, color: 'var(--gray-800)' },
@@ -1672,7 +1717,8 @@ const S = {
   adminLoginCard: { background: '#1f2937', borderRadius: 20, padding: '36px 32px', maxWidth: 380, width: '100%' },
   adminInput: { width: '100%', background: '#374151', border: '2px solid #4b5563', borderRadius: 12, padding: 14, color: 'white', fontFamily: 'inherit', fontSize: 15, outline: 'none', marginBottom: 16, direction: 'rtl', textAlign: 'right' },
   btnBack: { width: '100%', background: 'transparent', border: '2px solid #4b5563', color: '#9ca3af', borderRadius: 12, padding: 12, fontFamily: 'inherit', fontSize: 14, cursor: 'pointer', marginTop: 8 },
-  adminBar: { background: '#1f2937', color: 'white', padding: '14px 20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', position: 'sticky', top: 0, zIndex: 100 },
+  adminBar: { background: '#1f2937', color: 'white', padding: '14px 20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', position: 'sticky', top: 0, zIndex: 120 },
+  adminTabs: { display: 'flex', background: '#111827', borderBottom: '2px solid #374151', position: 'sticky', top: 62, zIndex: 110 },
   adminCard: { background: 'white', borderRadius: 16, padding: 20, marginBottom: 12, boxShadow: '0 1px 4px rgba(0,0,0,0.06)' },
   adminCardHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 },
   qNum: { background: 'var(--gray-100)', color: 'var(--gray-600)', fontSize: 12, fontWeight: 700, padding: '4px 10px', borderRadius: 99 },
